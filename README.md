@@ -9,7 +9,8 @@ For normal use there are only two files to care about: [config.json](config.json
 - Recursively inventories ordinary files, including excluded files, so omissions can be explained.
 - Extracts embedded dates using batched ExifTool requests, regardless of camera brand or filename. `007.JPG`, `Pasha4.jpg`, `DSCN1277.JPG`, random BMP names, and descriptive names all receive metadata extraction.
 - Uses common full-filename date formats only as a configured fallback. Arbitrary names and parent folder names are never interpreted semantically.
-- Groups dated media under `YYYY/MM/EventNN/` or `YYYY/MM/_sparse/`. Files without a usable date go to `_UNKNOWN_DATE/`, with their names preserved.
+- Counts primary image/video files by resolved calendar date. Dates meeting `day_grouping.threshold` go to `YYYY/MM-Mmm/DayDD/`; smaller dates share the month's `_sparse/` folder.
+- Treats XMP and AAE as sidecars: an unambiguous same-stem sidecar follows its primary without affecting the daily threshold. CR2 is primary media and is stored in a `CR2/` leaf below its dated or unknown-date folder.
 - Copies through temporary files, verifies content, then publishes without overwriting.
 - Writes a TXT execution log, a self-contained HTML report, and machine-readable CSV/JSON/JSONL audits.
 - Lists **Source files not archived** in both TXT and HTML, including the source path and reason for each exclusion/failure/unconfirmed result.
@@ -29,12 +30,12 @@ For normal use there are only two files to care about: [config.json](config.json
 ```text
 CLI → config/path/tool validation → atomic destination claim
     → recursive inventory → batched metadata → timestamp decisions
-    → event grouping → complete plan + audit → collision/space preflight
+    → daily classification → complete plan + audit → collision/space preflight
     → streaming copy → SHA-256 verification → exclusive publication
     → independent source/destination scans → shared result → reports
 ```
 
-The package separates configuration, filesystem safety, discovery, metadata providers, timestamp resolution, event grouping, planning, copy verification, reconciliation, and reporting. `ArchiveOrganizer` coordinates these services. The top-level `photo_organizer.py` only delegates to the CLI. Tests inject metadata providers, clocks, copy verifiers, and publishers without touching real collections.
+The package separates configuration, filesystem safety, discovery and media roles, metadata providers, timestamp resolution, daily classification, planning, copy verification, reconciliation, and reporting. `ArchiveOrganizer` coordinates these services. The top-level `photo_organizer.py` only delegates to the CLI. Tests inject metadata providers, clocks, copy verifiers, and publishers without touching real collections.
 
 ## Quick example (Windows)
 
@@ -54,6 +55,8 @@ The BAT performs the complete safe workflow: validate, inventory, analyze metada
 
 `copy.free_space_margin_percent` adds extra required free space above the planned archive size before copying starts. The default `10` means the destination needs the planned bytes plus a 10 percent safety margin, with additional allowance for temporary partial files created by concurrent copy workers.
 
+`day_grouping.threshold` is the minimum number of primary image/video files on one resolved calendar date required to create that date's `DayDD` folder. The default is `15`. Sidecars do not count; separate JPG and CR2 files do. Values must be integers greater than or equal to `1`.
+
 ## Output
 
 ```text
@@ -65,8 +68,10 @@ Photo_Archive/
 │   ├── logs/photo_organizer.txt
 │   ├── reports/         # report.html, summary.json, CSV reports
 │   └── tmp/             # owned partial files; normally empty on completion
-├── 2018/07/_sparse/IMG_20180729_093414.jpg
-├── 2024/02/Event01/2024-02-03_002850.jpg
+├── 2018/07-Jul/_sparse/IMG_20180729_093414.jpg
+├── 2024/02-Feb/Day03/2024-02-03_002850.jpg
+├── 2024/02-Feb/Day03/CR2/IMG_1001.CR2
+├── 2024/02-Feb/Day03/CR2/IMG_1001.XMP
 └── _UNKNOWN_DATE/Pasha4.jpg
 ```
 

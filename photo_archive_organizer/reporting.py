@@ -44,30 +44,42 @@ class AuditWriter:
         plan_by_source = {p.media.relative_path: p for p in state.plan}
         records, rows = [], []
         for media in state.inventory.eligible:
-            timestamp = state.timestamps.get(media.relative_path)
             entry = plan_by_source.get(media.relative_path)
+            timestamp = state.timestamps.get(media.relative_path) or (entry.timestamp if entry else None)
             records.append({"schema_version": 1, "media": jsonable(media), "timestamp": jsonable(timestamp),
                             "destination_relative_path": entry.destination if entry else None,
-                            "classification": entry.classification if entry else None, "event_id": entry.event_id if entry else None})
+                            "resolved_date": timestamp.value.date().isoformat() if timestamp and timestamp.value else None,
+                            "daily_primary_media_count": entry.daily_primary_media_count if entry else None,
+                            "day_classification": entry.day_classification if entry else None,
+                            "month_folder": entry.month_folder if entry else None,
+                            "day_folder": entry.day_folder if entry else None,
+                            "media_role": media.media_role, "storage_leaf": entry.storage_leaf if entry else None,
+                            "associated_primary": media.associated_primary})
             if timestamp:
                 t = timestamp.value
                 rows.append({"source_relative_path": media.relative_path, "selected_timestamp": t.isoformat() if t else "",
                              "selected_source_category": timestamp.category, "selected_source_field": timestamp.source_field,
                              "confidence": timestamp.confidence, "timezone_known": timestamp.timezone_known,
                              "precision": timestamp.precision, "year": t.year if t else "", "month": t.month if t else "", "day": t.day if t else "",
-                             "classification": entry.classification if entry else "", "event_id": entry.event_id if entry else "",
+                             "daily_primary_media_count": entry.daily_primary_media_count if entry else "",
+                             "day_classification": entry.day_classification if entry else "",
+                             "media_role": media.media_role, "storage_leaf": entry.storage_leaf if entry else "",
                              "destination_relative_path": entry.destination if entry else "", "warnings": timestamp.warnings})
         with (self.process / "_AuditTrail/manifest.jsonl").open("w", encoding="utf-8") as stream:
             for record in records:
                 stream.write(json.dumps(record, ensure_ascii=False) + "\n")
         write_csv(self.process / "_AuditTrail/timestamp_audit.csv", rows,
                   ["source_relative_path", "selected_timestamp", "selected_source_category", "selected_source_field", "confidence",
-                   "timezone_known", "precision", "year", "month", "day", "classification", "event_id", "destination_relative_path", "warnings"])
+                   "timezone_known", "precision", "year", "month", "day", "daily_primary_media_count", "day_classification",
+                   "media_role", "storage_leaf", "destination_relative_path", "warnings"])
         if include_plan:
             write_csv(self.process / "reports/plan.csv", [{"source_relative_path": p.media.relative_path,
-                      "destination_relative_path": p.destination, "size": p.media.size, "classification": p.classification,
-                      "event_id": p.event_id} for p in state.plan],
-                      ["source_relative_path", "destination_relative_path", "size", "classification", "event_id"])
+                      "destination_relative_path": p.destination, "size": p.media.size,
+                      "daily_primary_media_count": p.daily_primary_media_count, "day_classification": p.day_classification,
+                      "media_role": p.media_role, "storage_leaf": p.storage_leaf,
+                      "associated_primary": p.associated_primary} for p in state.plan],
+                      ["source_relative_path", "destination_relative_path", "size", "daily_primary_media_count",
+                       "day_classification", "media_role", "storage_leaf", "associated_primary"])
 
     def copy_result(self, result):
         with (self.process / "_AuditTrail/copy_results.jsonl").open("a", encoding="utf-8") as stream:
@@ -93,7 +105,9 @@ def build_not_archived(state):
         if state.reconciliation.complete and destination:
             presence = "PRESENT_UNVERIFIED" if destination in state.reconciliation.destination else "ABSENT"
         if not media.eligible:
-            disposition, reason, explanation = "EXCLUDED", media.reason, media.detail
+            disposition = ("UNASSOCIATED_SIDECAR" if media.reason == "UNASSOCIATED_SIDECAR" else
+                           "UNSUPPORTED" if media.media_role == "UNSUPPORTED" else "IGNORED")
+            reason, explanation = media.reason, media.detail
         elif name in state.collisions:
             disposition, reason, explanation = "FAILED", "PLAN_COLLISION", "multiple sources map to the same destination"
         elif copied and not copied.success:
@@ -127,6 +141,8 @@ def summarize(config, state, missing):
         status, code = "WARN", 0
     else:
         status, code = "PASS", 0
+    primary_plan = [p for p in state.plan if p.media_role == "PRIMARY_MEDIA"]
+    sidecar_plan = [p for p in state.plan if p.media_role == "SIDECAR"]
     dates = [t.value for t in state.timestamps.values() if t.value]
     return {"schema_version": 1, "status": status, "exit_code": code, "command": state.command,
             "completed_stage": state.completed_stage, "last_stage": state.stage, "run_id": state.run_id, "tool_version": __version__,
@@ -134,6 +150,8 @@ def summarize(config, state, missing):
             "started": state.started, "ended": state.ended,
             "inventory_complete": state.inventory_complete, "reconciliation": state.reconciliation.status,
             "reconciliation_complete": state.reconciliation.complete,
+            "primary_media_reconciliation": state.reconciliation.primary_status,
+            "sidecar_reconciliation": state.reconciliation.sidecar_status,
             "source_media_total": sum(f.recognized for f in state.inventory.files),
             "source_media_ignored": sum(f.recognized and not f.eligible for f in state.inventory.files),
             "source_media_eligible": len(state.inventory.eligible), "planned_media": len(state.plan),
@@ -143,9 +161,21 @@ def summarize(config, state, missing):
             "not_attempted_copies": sum(not r.success and r.attempt_count == 0 for r in copies),
             "destination_media_recount": len(state.reconciliation.destination) if state.reconciliation.status != "NOT_RUN" else None,
             "bytes_planned": sum(p.media.size for p in state.plan), "bytes_copied": sum(r.source_size for r in copies if r.success),
-            "event_count": len({p.destination.rsplit('/', 1)[0] for p in state.plan if p.event_id}),
+            "primary_media_count": len(state.inventory.primary_media),
+            "sidecar_count": sum(f.media_role == "SIDECAR" for f in state.inventory.files),
+            "associated_sidecar_count": len(state.inventory.associated_sidecars),
+            "unassociated_sidecar_count": sum(f.reason == "UNASSOCIATED_SIDECAR" for f in state.inventory.files),
+            "cr2_primary_media_count": sum(p.media.path.suffix.lower() == ".cr2" for p in primary_plan),
+            "day_folder_count": len({(p.timestamp.value.date(), p.day_folder) for p in primary_plan if p.day_classification == "DAY_FOLDER"}),
+            "sparse_day_count": len({p.timestamp.value.date() for p in primary_plan if p.day_classification == "SPARSE"}),
+            "sparse_primary_media_count": sum(p.day_classification == "SPARSE" for p in primary_plan),
+            "unknown_date_primary_media_count": sum(p.day_classification == "UNKNOWN_DATE" for p in primary_plan),
+            "planned_primary_media": len(primary_plan), "planned_associated_sidecars": len(sidecar_plan),
+            "verified_primary_media": sum(state.copies.get(p.media.relative_path) is not None and state.copies[p.media.relative_path].success for p in primary_plan),
+            "verified_associated_sidecars": sum(state.copies.get(p.media.relative_path) is not None and state.copies[p.media.relative_path].success for p in sidecar_plan),
+            "destination_primary_media_recount": len(state.reconciliation.primary_destination) if state.reconciliation.status != "NOT_RUN" else None,
+            "destination_sidecar_recount": len(state.reconciliation.sidecar_destination) if state.reconciliation.status != "NOT_RUN" else None,
             "year_count": len({d.year for d in dates}),
-            "sparse_file_count": sum(p.classification == "_sparse" for p in state.plan),
             "unknown_date_count": sum(t.value is None for t in state.timestamps.values()),
             "timestamp_sources": dict(Counter(t.category for t in state.timestamps.values())),
             "not_archived_count": len(missing), "not_archived_reasons": dict(Counter(r["reason"] for r in missing)),
@@ -162,15 +192,35 @@ def table(rows, columns):
     return f'<div class="table-wrap"><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>'
 
 
+def daily_audit_rows(state):
+    rows = {}
+    for entry in state.plan:
+        if entry.timestamp.value is None:
+            continue
+        day = entry.timestamp.value.date()
+        row = rows.setdefault(day, {
+            "date": day.isoformat(), "primary_media": entry.daily_primary_media_count,
+            "sidecars": 0, "classification": entry.day_classification,
+            "destination": f"{day.year:04d}/{entry.month_folder}/{entry.day_folder}",
+        })
+        if entry.media_role == "SIDECAR":
+            row["sidecars"] += 1
+    return [rows[day] for day in sorted(rows)]
+
+
 class HtmlReportWriter:
     def write(self, path, summary, state, missing, coverage):
         esc = html.escape
         cards = "".join(f'<div class="card"><span>{esc(label)}</span><strong>{summary[key]}</strong></div>' for label, key in
-                        [("Eligible media", "source_media_eligible"), ("Verified copies", "successful_copies"),
-                         ("Destination recount", "destination_media_recount"), ("Files not archived", "not_archived_count")])
-        months = Counter(p.destination[:7] for p in state.plan if p.timestamp.value)
-        events = Counter(p.destination.rsplit('/', 1)[0] for p in state.plan if p.event_id)
-        overview = {k: summary[k] for k in ("source_media_total", "source_media_ignored", "planned_media", "failed_copies", "not_attempted_copies", "year_count", "event_count", "sparse_file_count", "unknown_date_count", "bytes_planned", "bytes_copied", "exit_code")}
+                        [("Primary media", "primary_media_count"), ("Associated sidecars", "associated_sidecar_count"),
+                         ("Day folders", "day_folder_count"), ("Files not archived", "not_archived_count")])
+        months = Counter(f"{p.timestamp.value.year:04d}/{p.month_folder}" for p in state.plan if p.timestamp.value and p.media_role == "PRIMARY_MEDIA")
+        daily = daily_audit_rows(state)
+        overview = {k: summary[k] for k in ("primary_media_count", "sidecar_count", "associated_sidecar_count",
+                    "unassociated_sidecar_count", "planned_primary_media", "planned_associated_sidecars",
+                    "verified_primary_media", "verified_associated_sidecars", "day_folder_count", "sparse_day_count",
+                    "sparse_primary_media_count", "unknown_date_primary_media_count", "cr2_primary_media_count",
+                    "failed_copies", "not_attempted_copies", "year_count", "bytes_planned", "bytes_copied", "exit_code")}
         facts = "".join(f"<dt>{esc(k.replace('_', ' '))}</dt><dd>{esc(str(v))}</dd>" for k, v in overview.items())
         links = [("../logs/photo_organizer.txt", "TXT execution log"), ("summary.json", "JSON summary"), ("not_archived.csv", "Not archived CSV"),
                  ("errors.csv", "Errors CSV"), ("ignored_files.csv", "Ignored files CSV"), ("plan.csv", "Plan CSV"),
@@ -182,7 +232,7 @@ class HtmlReportWriter:
 :root{{font-family:Segoe UI,system-ui,sans-serif;color:#183044;background:#f1f5f9}}body{{max-width:1200px;margin:auto;padding:32px 20px}}header{{padding:24px 0}}h1{{font-size:32px;margin:8px 0}}h2{{font-size:21px}}.muted,span{{color:#52677b}}.badge{{display:inline-block;background:#dce9f3;padding:8px 16px;border-radius:24px;font-weight:700}}.FAIL,.INTERRUPTED{{background:#ffe0de;color:#8e2323}}.WARN{{background:#fff0c7;color:#684800}}.PASS{{background:#d5f4e4;color:#155d3c}}.cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px}}.card,section{{background:white;border:1px solid #d9e2eb;border-radius:12px;padding:24px;margin:16px 0}}.card strong{{display:block;font-size:30px;margin-top:10px}}.table-wrap{{overflow:auto;max-height:650px}}table{{width:100%;border-collapse:collapse;font-size:14px}}th,td{{text-align:left;padding:12px;border-bottom:1px solid #e5ebf0;vertical-align:top;overflow-wrap:anywhere}}th{{background:#edf3f8;position:sticky;top:0}}dl{{display:grid;grid-template-columns:1fr 1fr;gap:8px}}dd{{margin:0;font-weight:600}}a{{display:inline-block;margin:6px 16px 6px 0;color:#175bab}}.path{{overflow-wrap:anywhere}}.empty{{color:#52677b}}
 </style></head><body><header><div class="muted">LOCAL · VERIFIED · AUDITABLE</div><h1>Photo Archive Organizer</h1><div class="badge {summary['status']}">{summary['status']}</div>
 <p>Command: {esc(state.command)} · Stage: {esc(state.stage)}</p><p class="path">Source: {esc(summary['source_root'])}<br>Destination: {esc(summary['destination_root'])}</p><p class="muted">{esc(state.started)} — {esc(state.ended)}</p></header>
-<div class="cards">{cards}</div><section><h2>Reconciliation: {summary['reconciliation']}</h2><p>Source eligible → planned → verified copies → independent destination recount. Path membership, sizes, and source stability must also agree.</p>{table(state.reconciliation.issues, ['path','reason','detail'])}</section>
+<div class="cards">{cards}</div><section><h2>Reconciliation: {summary['reconciliation']}</h2><p>Primary media: {summary['primary_media_reconciliation']} · Associated sidecars: {summary['sidecar_reconciliation']}. Source eligible → planned → verified copies → independent destination recount. Path membership, sizes, and source stability must also agree.</p>{table(state.reconciliation.issues, ['path','reason','detail'])}</section>
 <section><h2>Archive summary</h2><dl>{facts}</dl></section>
 <section><h2>Free-space preflight</h2>{table([state.space] if state.space else [], ['status','planned_bytes','temporary_overhead','required_bytes','free_bytes'])}</section>
 <section><h2>Timestamp quality</h2>{table([{'source':k,'files':v} for k,v in summary['timestamp_sources'].items()], ['source','files'])}</section>
@@ -190,7 +240,7 @@ class HtmlReportWriter:
 <section><h2>Inventory coverage gaps and skipped entries</h2>{table(coverage, ['path','reason'])}</section>
 <section><h2>Warnings and errors</h2>{table(state.errors, ['path','stage','reason','detail'])}<ul>{''.join('<li>'+esc(w)+'</li>' for w in state.warnings)}</ul><p>{esc(state.fatal)}</p></section>
 <section><h2>Year / month summary</h2>{table([{'month':k,'files':v} for k,v in sorted(months.items())], ['month','files'])}</section>
-<section><h2>Event summary</h2>{table([{'event':k,'files':v} for k,v in sorted(events.items())], ['event','files'])}</section>
+<section><h2>Daily grouping summary</h2>{table(daily, ['date','primary_media','sidecars','classification','destination'])}</section>
 <section><h2>Audit files</h2>{anchors}</section></body></html>'''
         path.write_text(doc, encoding="utf-8")
 

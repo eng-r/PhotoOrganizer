@@ -22,8 +22,8 @@ class ArchiveReconciler:
             result.issues.append({"path": name, "reason": "SOURCE_ADDED_AFTER_PLANNING", "detail": "absent from initial inventory"})
         for name in sorted(before.keys() & after.keys()):
             a, b = before[name], after[name]
-            if (a.size, a.mtime_ns, a.identity, a.eligible) != (b.size, b.mtime_ns, b.identity, b.eligible):
-                result.issues.append({"path": name, "reason": "SOURCE_CHANGED", "detail": "size/mtime/identity/eligibility changed"})
+            if (a.size, a.mtime_ns, a.identity, a.eligible, a.media_role, a.associated_primary) != (b.size, b.mtime_ns, b.identity, b.eligible, b.media_role, b.associated_primary):
+                result.issues.append({"path": name, "reason": "SOURCE_CHANGED", "detail": "size/mtime/identity/role/association changed"})
         if initial.skipped != result.source.skipped:
             result.issues.append({"path": "", "reason": "SOURCE_CHANGED", "detail": "skipped link/special-entry inventory changed"})
         expected = {p.destination: p for p in plan}
@@ -51,8 +51,7 @@ class ArchiveReconciler:
                         stack.append(path)
                     elif stat.S_ISREG(st.st_mode):
                         actual_all[relative] = st.st_size
-                        if path.suffix.lower() in self.config["include_extensions"]:
-                            result.destination[relative] = st.st_size
+                        result.destination[relative] = st.st_size
                     else:
                         result.issues.append({"path": relative, "reason": "UNEXPECTED_DESTINATION_ENTRY", "detail": "not a regular file"})
             except (OSError, RuntimeError) as exc:
@@ -65,11 +64,29 @@ class ArchiveReconciler:
                 result.issues.append({"path": entry.media.relative_path, "reason": "DESTINATION_MISMATCH", "detail": name})
         for name in sorted(actual_all.keys() - expected.keys()):
             result.issues.append({"path": name, "reason": "UNEXPECTED_DESTINATION_FILE", "detail": "not in plan"})
-        good = sum(r.success for r in copies.values())
-        count = len(initial.eligible)
-        counts_match = count == len(result.source.eligible) == len(plan) == good == len(result.destination)
-        if not counts_match or any(not r.success for r in copies.values()):
-            result.issues.append({"path": "", "reason": "COUNT_MISMATCH", "detail": f"initial={count}; source={len(result.source.eligible)}; planned={len(plan)}; copied={good}; destination={len(result.destination)}"})
+        primary_plan = [p for p in plan if p.media_role == "PRIMARY_MEDIA"]
+        sidecar_plan = [p for p in plan if p.media_role == "SIDECAR"]
+        result.primary_destination = {p.destination: result.destination[p.destination] for p in primary_plan if p.destination in result.destination}
+        result.sidecar_destination = {p.destination: result.destination[p.destination] for p in sidecar_plan if p.destination in result.destination}
+        primary_good = sum(copies.get(p.media.relative_path) is not None and copies[p.media.relative_path].success for p in primary_plan)
+        sidecar_good = sum(copies.get(p.media.relative_path) is not None and copies[p.media.relative_path].success for p in sidecar_plan)
+        primary_counts = (len(initial.primary_media), len(result.source.primary_media), len(primary_plan), primary_good, len(result.primary_destination))
+        sidecar_counts = (len(initial.associated_sidecars), len(result.source.associated_sidecars), len(sidecar_plan), sidecar_good, len(result.sidecar_destination))
+        primary_ok = len(set(primary_counts)) == 1 and all(copies[p.media.relative_path].success for p in primary_plan)
+        sidecar_ok = len(set(sidecar_counts)) == 1 and all(copies[p.media.relative_path].success for p in sidecar_plan)
+        if not primary_ok:
+            result.issues.append({"path": "", "reason": "PRIMARY_MEDIA_COUNT_MISMATCH", "detail": "initial=%d; source=%d; planned=%d; copied=%d; destination=%d" % primary_counts})
+        if not sidecar_ok:
+            result.issues.append({"path": "", "reason": "SIDECAR_COUNT_MISMATCH", "detail": "initial=%d; source=%d; planned=%d; copied=%d; destination=%d" % sidecar_counts})
         result.complete = scan_complete and not result.source.gaps
+        primary_paths = {p.media.relative_path for p in primary_plan}
+        sidecar_paths = {p.media.relative_path for p in sidecar_plan}
+        global_reasons = {"SOURCE_INVENTORY_INCOMPLETE", "SOURCE_ADDED_AFTER_PLANNING", "SOURCE_CHANGED",
+                          "UNEXPECTED_DESTINATION_LINK", "UNEXPECTED_DESTINATION_ENTRY", "DESTINATION_SCAN_FAILED",
+                          "UNEXPECTED_DESTINATION_FILE"}
+        primary_issues = any(i["reason"] == "PRIMARY_MEDIA_COUNT_MISMATCH" or i["path"] in primary_paths or i["reason"] in global_reasons for i in result.issues)
+        sidecar_issues = any(i["reason"] == "SIDECAR_COUNT_MISMATCH" or i["path"] in sidecar_paths or i["reason"] in global_reasons for i in result.issues)
+        result.primary_status = "PASS" if result.complete and primary_ok and not primary_issues else "FAIL"
+        result.sidecar_status = "PASS" if result.complete and sidecar_ok and not sidecar_issues else "FAIL"
         result.status = "PASS" if result.complete and not result.issues else "FAIL"
         return result

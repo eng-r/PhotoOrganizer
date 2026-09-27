@@ -58,7 +58,7 @@ def test_real_generic_jpeg_bmp_and_video(roots, make_config):
     assert app.summary["successful_copies"] == 8
     for name in names:
         assert app.state.timestamps[name].value.year == 2003
-        assert (dest / "2003/04/Event01" / name).is_file()
+        assert (dest / "2003/04-Apr/_sparse" / name).is_file()
     assert (dest / "_UNKNOWN_DATE/random name.BMP").is_file()
     assert app.state.timestamps["video.mp4"].value.isoformat() == "2020-06-07T08:09:10"
     assert not app.state.timestamps["video.mp4"].timezone_known

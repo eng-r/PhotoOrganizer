@@ -82,9 +82,9 @@ def test_generic_filenames(roots, make_config, with_dates):
     assert app.summary["unknown_date_count"] == (0 if with_dates else 6)
     assert not missing_rows(dest)
     if with_dates:
-        assert all((dest / "2002/03/Event01" / n).is_file() for n in names)
+        assert all((dest / "2002/03-Mar/_sparse" / n).is_file() for n in names)
     else:
-        assert (dest / "2018/07/_sparse/IMG_20180729_093414.jpg").exists()
+        assert (dest / "2018/07-Jul/_sparse/IMG_20180729_093414.jpg").exists()
 
 
 def test_flist2_regression(roots, make_config):
@@ -101,7 +101,7 @@ def test_flist2_regression(roots, make_config):
     before = snapshot(source)
     assert app.execute("run") == 0
     assert len(list((dest / "_UNKNOWN_DATE").iterdir())) == 44
-    assert len(list((dest / "2024/02/Event01").iterdir())) == 10
+    assert len(list((dest / "2024/02-Feb/_sparse").iterdir())) == 10
     assert snapshot(source) == before
 
 
@@ -224,3 +224,70 @@ def test_source_added_after_copy_fails(roots, make_config):
     app = ArchiveOrganizer(make_config(), FakeProvider(), NOW, Adding)
     assert app.execute("run") == 1
     assert "SOURCE_ADDED_AFTER_PLANNING" in (dest / "_process/reports/report.html").read_text(encoding="utf-8")
+
+
+def test_cr2_sidecars_reconcile_and_unassociated_is_reported(roots, make_config):
+    source, dest = roots
+    create_files(source, ["dated.cr2", "dated.xmp", "unknown.cr2", "unknown.xmp", "alone.xmp"])
+    provider = FakeProvider({"dated.cr2": {"ExifIFD:DateTimeOriginal": "2026:09:27 12:00:00"}})
+    app = ArchiveOrganizer(make_config(day_grouping={"threshold": 1}), provider, NOW)
+    assert app.execute("run") == 0
+    assert (dest / "2026/09-Sep/Day27/CR2/dated.cr2").is_file()
+    assert (dest / "2026/09-Sep/Day27/CR2/dated.xmp").is_file()
+    assert (dest / "_UNKNOWN_DATE/CR2/unknown.cr2").is_file()
+    assert (dest / "_UNKNOWN_DATE/CR2/unknown.xmp").is_file()
+    report = load_report(dest)
+    assert report["primary_media_count"] == report["planned_primary_media"] == report["verified_primary_media"] == 2
+    assert report["sidecar_count"] == 3
+    assert report["associated_sidecar_count"] == report["planned_associated_sidecars"] == report["verified_associated_sidecars"] == 2
+    assert report["unassociated_sidecar_count"] == 1
+    assert report["primary_media_reconciliation"] == report["sidecar_reconciliation"] == "PASS"
+    assert missing_rows(dest)[0]["reason"] == "UNASSOCIATED_SIDECAR"
+    html = (dest / "_process/reports/report.html").read_text(encoding="utf-8")
+    assert "Daily grouping summary" in html and "DAY_FOLDER" in html
+
+
+def test_associated_sidecar_failure_prevents_pass(roots, make_config):
+    source, dest = roots
+    create_files(source, ["image.jpg", "image.aae"])
+    class SidecarFailingEngine(CopyEngine):
+        def copy_one(self, entry):
+            if entry.media.media_role == "SIDECAR":
+                return CopyResult(entry.media.relative_path, entry.destination, attempt_count=1,
+                                  reason="SOURCE_READ_FAILED", error="injected sidecar failure", stage="SOURCE")
+            return super().copy_one(entry)
+    app = ArchiveOrganizer(make_config(day_grouping={"threshold": 1}),
+                           FakeProvider({"image.jpg": {"ExifIFD:DateTimeOriginal": "2026:09:27 12:00:00"}}),
+                           NOW, SidecarFailingEngine)
+    assert app.execute("run") == 1
+    report = load_report(dest)
+    assert report["primary_media_reconciliation"] == "PASS"
+    assert report["sidecar_reconciliation"] == report["reconciliation"] == "FAIL"
+    assert missing_rows(dest)[0]["source_relative_path"] == "image.aae"
+
+
+@pytest.mark.parametrize("month,counts,expected_days,sparse_count", [
+    (4, [(2, 3), (9, 8), (21, 14)], set(), 25),
+    (5, [(4, 15), (17, 20)], {"Day04", "Day17"}, 0),
+    (9, [(2, 8), (14, 14), (27, 31)], {"Day27"}, 22),
+])
+def test_daily_month_layout_and_html_audit(roots, make_config, month, counts, expected_days, sparse_count):
+    source, dest = roots
+    tags = {}
+    for day, count in counts:
+        for index in range(count):
+            name = f"d{day:02d}-{index:02d}.jpg"
+            create_files(source, [name])
+            tags[name] = {"ExifIFD:DateTimeOriginal": f"2026:{month:02d}:{day:02d} 12:00:00"}
+    app = ArchiveOrganizer(make_config(day_grouping={"threshold": 15}), FakeProvider(tags), NOW)
+    assert app.execute("run") == 0
+    month_folder = {4: "04-Apr", 5: "05-May", 9: "09-Sep"}[month]
+    actual_folders = {p.name for p in (dest / f"2026/{month_folder}").iterdir() if p.is_dir()}
+    expected_folders = expected_days | ({"_sparse"} if sparse_count else set())
+    assert actual_folders == expected_folders
+    if sparse_count:
+        assert len(list((dest / f"2026/{month_folder}/_sparse").glob("*.jpg"))) == sparse_count
+    html = (dest / "_process/reports/report.html").read_text(encoding="utf-8")
+    for day, count in counts:
+        assert f"2026-{month:02d}-{day:02d}" in html
+        assert f"<td>{count}</td>" in html

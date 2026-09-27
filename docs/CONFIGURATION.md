@@ -12,9 +12,7 @@ For normal use, edit only `source_root` and `destination_root` in the root `conf
 | `timestamp.priority` | `DateTimeOriginal`, `XMPDateCreated`, `CreateDate`, `VideoCreationDate`, `FilenameDate`. First usable configured category wins. |
 | `timestamp.minimum_year` | `1980` — lower it if your embedded/filename dates legitimately predate 1980. |
 | `timestamp.future_tolerance_days` | `2` days beyond the frozen run clock. |
-| `event_grouping.sparse_max_files_per_day` | `3` — sparse days go to `_sparse`. |
-| `event_grouping.dense_min_files_per_day` | `4` — must equal sparse maximum + 1. |
-| `event_grouping.event_max_span_days` | `3` — split consecutive dense runs into at most this many calendar days; never span months. |
+| `day_grouping.threshold` | `15` — minimum primary image/video count for a date to use `DayDD`; must be an integer at least `1`. Smaller dates share the month's `_sparse`. Sidecars never count. |
 | `copy.retry_count` | `2` retries after the initial attempt. |
 | `copy.retry_delays_seconds` | `[1, 3]`; length must equal retry count. |
 | `copy.copy_workers` | `2` streaming copy/verification workers. |
@@ -35,6 +33,8 @@ Common filename formats include `IMG_20180729_093414`, compact `IMG2024051812541
 Capture timestamps retain their recorded calendar date and explicit offset when available. Unknown timezones remain unknown. Offset-free video dates are not automatically shifted through the computer's timezone. Filesystem mtime is UTC and LOW confidence; it may reflect copying/restoration rather than capture. Day-only filename dates retain day precision.
 
 No automatic scan/film-date inference is performed. Unknown-date media are preserved. Old collections should deliberately choose `minimum_year` and avoid assuming digitization dates are historical capture dates.
+
+Month names (`01-Jan` through `12-Dec`) and day names (`Day01` through `Day31`) are fixed V1 invariants and are not configurable. CR2 files remain primary media and count toward the threshold, but the planner stores them under a `CR2` leaf after daily classification. XMP and AAE files are sidecars; a sidecar is archived only when exactly one primary file in the same source directory has the same stem. Unassociated or ambiguous sidecars are reported as `UNASSOCIATED_SIDECAR`.
 
 ## Migrating the original specification's example
 

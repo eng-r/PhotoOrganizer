@@ -7,7 +7,7 @@ You only need two files:
 
 ## 1. Edit `config.json`
 
-Replace both `CHANGE_ME` values and save. The complete JSON exposes every normal user setting — media extensions, ignore rules, timestamp order, event grouping, copy retries/workers/space margin, and progress/metadata timeout. Leave a setting at its shown value unless you want to change that behavior.
+Replace both example paths and save. The complete JSON exposes every normal user setting: media extensions, ignore rules, timestamp order, the daily primary-media threshold, copy retries/workers/space margin, and progress/metadata timeout. Leave a setting at its shown value unless you want to change that behavior.
 
 ```json
 {
@@ -41,6 +41,8 @@ YOUR DESTINATION\_process\logs\photo_organizer.txt
 ```
 
 Both include **Source files not archived**, with a reason for every listed file. Files copied to `_UNKNOWN_DATE` were archived successfully and are not considered missing.
+
+Dated media is stored under fixed `YYYY/MM-Mmm/DayDD` folders when a date reaches the configured threshold; smaller dates share that month's `_sparse`. CR2 files use a nested `CR2` folder, and unambiguous same-stem XMP/AAE sidecars follow their primary file.
 
 If the BAT reports a problem, nothing in the source is modified. Read the message and see [operations and troubleshooting](OPERATIONS.md). A destination used by any prior attempt is no longer empty; use a new empty destination for another run.
 

@@ -23,10 +23,8 @@
     "future_tolerance_days": 2
   },
 
-  "event_grouping": {
-    "sparse_max_files_per_day": 6,
-    "dense_min_files_per_day": 7,
-    "event_max_span_days": 2
+  "day_grouping": {
+    "threshold": 15
   },
 
   "copy": {

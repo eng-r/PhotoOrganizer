@@ -16,6 +16,8 @@ class MediaFile:
     reason: str = ""
     detail: str = ""
     ctime_ns: int = 0
+    media_role: str = "UNSUPPORTED"
+    associated_primary: str = ""
 
 
 @dataclass
@@ -27,6 +29,14 @@ class Inventory:
     @property
     def eligible(self):
         return [f for f in self.files if f.eligible]
+
+    @property
+    def primary_media(self):
+        return [f for f in self.files if f.eligible and f.media_role == "PRIMARY_MEDIA"]
+
+    @property
+    def associated_sidecars(self):
+        return [f for f in self.files if f.eligible and f.media_role == "SIDECAR"]
 
 
 @dataclass
@@ -54,8 +64,13 @@ class PlannedMediaFile:
     media: MediaFile
     timestamp: ResolvedTimestamp
     destination: str
-    classification: str
-    event_id: str = ""
+    day_classification: str
+    daily_primary_media_count: int = 0
+    month_folder: str = ""
+    day_folder: str = ""
+    media_role: str = "PRIMARY_MEDIA"
+    storage_leaf: str = ""
+    associated_primary: str = ""
 
 
 @dataclass
@@ -78,8 +93,12 @@ class ReconciliationResult:
     status: str = "NOT_RUN"
     source: Inventory = field(default_factory=Inventory)
     destination: dict[str, int] = field(default_factory=dict)
+    primary_destination: dict[str, int] = field(default_factory=dict)
+    sidecar_destination: dict[str, int] = field(default_factory=dict)
     issues: list[dict] = field(default_factory=list)
     complete: bool = False
+    primary_status: str = "NOT_RUN"
+    sidecar_status: str = "NOT_RUN"
 
 
 @dataclass

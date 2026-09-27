@@ -61,7 +61,7 @@ class ArchiveOrganizer:
             state.completed_stage = "ANALYZE"
             if command != "analyze":
                 self._stage(state, progress, "PLANNING")
-                planner = ArchivePlanner(self.config.section("event_grouping"))
+                planner = ArchivePlanner(self.config.section("day_grouping"))
                 state.plan = planner.build(state.inventory.eligible, state.timestamps)
                 state.collisions = planner.validate(state.plan, state.inventory.eligible)
                 audit.analysis(state, include_plan=True)
@@ -136,7 +136,7 @@ class ArchiveOrganizer:
         progress.set_stage(name)
 
     def _analyze(self, state, progress):
-        files = state.inventory.eligible
+        files = state.inventory.primary_media
         policy = self.config.section("copy")
         resolver = TimestampResolver(self.config.section("timestamp"), self.now)
         for start in range(0, len(files), 128):

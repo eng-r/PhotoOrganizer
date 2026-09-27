@@ -20,7 +20,7 @@ DEFAULTS = {
         "priority": ["DateTimeOriginal", "XMPDateCreated", "CreateDate", "VideoCreationDate", "FilenameDate"],
         "minimum_year": 1980, "future_tolerance_days": 2,
     },
-    "event_grouping": {"sparse_max_files_per_day": 3, "dense_min_files_per_day": 4, "event_max_span_days": 3},
+    "day_grouping": {"threshold": 15},
     "copy": {"retry_count": 2, "retry_delays_seconds": [1, 3], "copy_workers": 2, "free_space_margin_percent": 10},
     "runtime": {"progress_interval_seconds": 5, "metadata_timeout_seconds": 120},
 }
@@ -91,14 +91,14 @@ class ConfigLoader:
         ranks = [2 if p == "FilesystemMTime" else 1 if p == "FilenameDate" else 0 for p in priority]
         if ranks != sorted(ranks):
             raise ConfigError("embedded metadata must precede filename and filesystem fallbacks")
-        integer_fields = {"timestamp": ["minimum_year"], "event_grouping": list(d["event_grouping"]),
+        integer_fields = {"timestamp": ["minimum_year"], "day_grouping": ["threshold"],
                           "copy": ["retry_count", "copy_workers"]}
         for section, keys in integer_fields.items():
             for key in keys:
                 if type(d[section][key]) is not int:
                     raise ConfigError(f"{section}.{key} must be an integer")
         for section, keys in {"timestamp": ["minimum_year", "future_tolerance_days"],
-                              "event_grouping": list(d["event_grouping"]),
+                              "day_grouping": ["threshold"],
                               "copy": ["retry_count", "copy_workers", "free_space_margin_percent"],
                               "runtime": list(d["runtime"])}.items():
             for key in keys:
@@ -107,9 +107,8 @@ class ConfigLoader:
                     raise ConfigError(f"{section}.{key} must be finite and nonnegative")
         if not 1 <= d["timestamp"]["minimum_year"] <= 9999:
             raise ConfigError("minimum_year must be 1..9999")
-        g = d["event_grouping"]
-        if g["dense_min_files_per_day"] != g["sparse_max_files_per_day"] + 1 or g["event_max_span_days"] < 1:
-            raise ConfigError("event thresholds must be adjacent and span positive")
+        if d["day_grouping"]["threshold"] < 1:
+            raise ConfigError("day_grouping.threshold must be at least 1")
         if d["copy"]["copy_workers"] < 1 or any(v <= 0 for v in d["runtime"].values()):
             raise ConfigError("workers and runtime intervals must be positive")
         delays = d["copy"]["retry_delays_seconds"]

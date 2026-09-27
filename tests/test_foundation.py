@@ -16,7 +16,7 @@ from conftest import create_files
     {"timestamp": {"priority": ["FilenameDate", "DateTimeOriginal"]}},
     {"timestamp": {"priority": ["FilesystemMTime", "FilenameDate"]}},
     {"timestamp": {"priority": ["CreateDate", "CreateDate"]}},
-    {"event_grouping": {"dense_min_files_per_day": 5}},
+    {"day_grouping": {"threshold": 0}}, {"day_grouping": {"threshold": 1.5}},
     {"runtime": {"progress_interval_seconds": 0}},
     {"copy": {"free_space_margin_percent": float('nan')}},
     {"copy": {"retry_count": 3}}, {"timestamp": {"priority": ["Canon"]}},

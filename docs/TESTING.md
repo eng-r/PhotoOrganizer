@@ -20,7 +20,8 @@ py -3.12 -m pytest -q
 - Root overlap, initially non-empty destination, concurrent claims and preserved ownership.
 - Case-insensitive media matching, recursive ignored-directory inventory, skipped links.
 - Common filename formats, unusual names, metadata precedence, missing/invalid dates, timezone provenance.
-- Sparse/dense boundaries, consecutive-day limits, month/year boundaries, deterministic ordering, collisions and space.
+- Daily threshold boundaries (1/14/15/16), sparse-only/day-only/mixed months, fixed locale-independent month/day names, month/year boundaries, deterministic ordering, collisions and space.
+- CR2 day/sparse/unknown placement; CR2/JPG counting; JPG/AAE and CR2/XMP association; ambiguous and unassociated sidecar reporting; separate reconciliation counts.
 - Verified copy, publication no-overwrite, retry, Ctrl+C, source immutability, final inventory membership.
 - Mandatory 100-recognized / 3-ignored / 97-eligible success, and one-copy-failure (96 copied) accounting.
 - `flist2.txt` 54-path regression built from synthetic contents.

@@ -9,10 +9,10 @@
 | `config.py` | Effective JSON defaults, strict validation, config-relative paths. |
 | `models.py` | Inventory, metadata, timestamp provenance, immutable planned entries, copy/reconciliation/run records. |
 | `safety.py` | Disjoint canonical roots, no reparse traversal, empty destination, ownership claim, valid target names, space estimation. |
-| `discovery.py` | Stable recursive inventory of ordinary source files; exclusions and coverage gaps. |
+| `discovery.py` | Stable recursive inventory, explicit media roles, conservative sidecar association, exclusions and coverage gaps. |
 | `metadata.py` | Provider interface and batched ExifTool subprocess adapter with cancellation and timeout. |
 | `timestamp_resolver.py` | Generic embedded tags, explicit filename fallback formats, sanity checks, confidence/provenance. |
-| `event_grouper.py`, `planner.py` | Pure deterministic placement, event numbering, complete plan and case-insensitive collision checks. |
+| `day_classifier.py`, `planner.py` | Pure per-date threshold classification, fixed folder naming, storage leaves, complete plan and case-insensitive collision checks. |
 | `copier.py`, `verifier.py` | Bounded streaming workers, retry policy, source stability checks, SHA-256, exclusive publication. |
 | `reconciler.py` | Independent source and destination scans and membership/stability checks. |
 | `reporting.py` | Shared not-archived outcomes, final status/summary, CSV/JSON/JSONL, TXT chapter and static HTML. |
@@ -26,7 +26,7 @@ Ownership is rechecked using claim content and filesystem identities. Before the
 
 ## Inventory and timestamp decisions
 
-File extension and explicit ignore patterns determine eligibility, never filename prefix or camera vendor. Ignored directories are recursively enumerated so every ordinary descendant is explainable; their files have no metadata request, timestamp decision, destination, or copy. Unknown extensions are recorded too. Links/reparse points are reported without traversal. Unreadable areas make inventory coverage incomplete and prevent successful reconciliation.
+File extension and explicit ignore patterns determine roles, never filename prefix or camera vendor. Configured image/video formats are `PRIMARY_MEDIA`; XMP and AAE are `SIDECAR`; unknown extensions are `UNSUPPORTED`; explicit exclusions are `IGNORED`. A sidecar is eligible only when exactly one primary in the same directory has the same case-insensitive stem. Ignored directories are recursively enumerated so every ordinary descendant is explainable. Links/reparse points are reported without traversal. Unreadable areas make inventory coverage incomplete and prevent successful reconciliation.
 
 ExifTool processes bounded batches (128 inputs per normal batch), not a subprocess per image. Absolute paths go through line-delimited argument input. Raw qualified tags and rejected candidates accompany each decision. Common EXIF/XMP creation tags and QuickTime creation fields are mapped explicitly. System file dates reported by ExifTool are not mistaken for embedded capture dates.
 
@@ -36,7 +36,9 @@ The run freezes one clock for future-date checks and records it with versions an
 
 ## Planning and copying
 
-Sort by selected civil timestamp (unknown last), casefolded source-relative path, then exact path. Count files by day within each month. Sparse days remain in `_sparse`; consecutive dense days become numbered events, split at the configured maximum span. Months/years always split events. RAW/JPEG companions are separate files.
+Sort by selected civil timestamp (unknown last), casefolded source-relative path, then exact path. The selected timestamp's `date()` is used directly without host-timezone conversion. Count each eligible primary image/video once per date. Counts at or above `day_grouping.threshold` use `YYYY/MM-Mmm/DayDD`; smaller dates share `YYYY/MM-Mmm/_sparse`. There is no cross-day merge. Fixed English month names come from an explicit mapping, not the OS locale. RAW/JPEG companions are separate primary files.
+
+Storage-leaf selection follows classification. CR2 uses a `CR2` leaf under `DayDD`, `_sparse`, or `_UNKNOWN_DATE`; other primary media currently have no storage leaf. An associated sidecar inherits the complete destination folder of its primary, so XMP paired with CR2 remains beside that CR2. Sidecars never affect the daily count.
 
 Every eligible source gets exactly one target preserving its basename. Case-insensitive target collisions are fatal before any media copy, including collisions in `_UNKNOWN_DATE`. The complete manifest/plan is persisted before free-space preflight and copy scheduling.
 
@@ -48,19 +50,21 @@ Recoverable operations retry using JSON policy. Source mutation and collision er
 
 Independent scans compare initial versus final source paths, identities, sizes, and mtimes, including ordinary excluded files. Destination enumeration excludes `_process` and checks exact expected file paths/sizes and unexpected files; source ignore rules do not hide destination errors.
 
-Required media accounting:
+Required primary-media accounting:
 
 ```text
-initial eligible = final eligible = planned = verified published copies = destination media recount
-failed media = 0
+initial primary = final primary = planned primary = verified published primary = destination primary recount
+failed primary media = 0
 source inventory stable; exact destination membership/sizes correct
 ```
+
+Associated sidecars are reconciled through the same chain separately. Any planned sidecar failure prevents overall PASS. Unassociated sidecars remain in source accounting and are reported explicitly rather than disappearing as unsupported files.
 
 Reconciliation can PASS while the overall run fails because metadata extraction errors occurred. Shared run records generate every report and the exit code. The not-archived chapter distinguishes exclusion, failure, not-attempted, and unconfirmed outcomes; present-but-unverified files are not described as physically absent.
 
 ## Practical limits
 
-- No archive append/resume/merge, camera alignment, deduplication, sidecar association, or historical scan-date inference.
+- No archive append/resume/merge, camera alignment, deduplication, fuzzy sidecar matching, or historical scan-date inference.
 - Directory/file ownership checks reduce accidental interference, but this is not a filesystem snapshot or protection against an adversary continuously replacing paths. Keep the source and destination otherwise idle during the run.
 - Reads may update filesystem-managed access times. The application never writes source content or timestamps; immutability tests cover names, bytes, size, and mtime.
 - Source stability uses identity/size/mtime; deliberate same-size changes with restored timestamps are outside that inventory check. Copied bytes are still SHA-256 verified. Final reconciliation does not rehash all source media a second time.

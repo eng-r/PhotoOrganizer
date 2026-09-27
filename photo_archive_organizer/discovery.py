@@ -1,12 +1,15 @@
 import fnmatch
 import os
 import stat
+from dataclasses import replace
 
 from .models import Inventory, MediaFile
 from .safety import identity, is_link
 
 
 class SourceScanner:
+    SIDECAR_EXTENSIONS = {".xmp", ".aae"}
+
     def __init__(self, media_config, progress=None, stop=None):
         self.config, self.progress, self.stop = media_config, progress, stop
 
@@ -41,7 +44,10 @@ class SourceScanner:
                             rule = inherited_rule or self.match(entry.name, self.config["ignore_directory_patterns"])
                             stack.append((path, rule))
                         elif stat.S_ISREG(st.st_mode):
-                            recognized = path.suffix.lower() in self.config["include_extensions"]
+                            extension = path.suffix.lower()
+                            sidecar = extension in self.SIDECAR_EXTENSIONS
+                            primary = extension in self.config["include_extensions"] and not sidecar
+                            recognized = primary or sidecar
                             name_rule = self.match(entry.name, self.config["ignore_name_patterns"])
                             reason, detail = "", ""
                             if inherited_rule:
@@ -50,8 +56,9 @@ class SourceScanner:
                                 reason, detail = "IGNORED_NAME_PATTERN", f"matched name rule {name_rule}"
                             elif not recognized:
                                 reason, detail = "UNSUPPORTED_EXTENSION", f"extension {path.suffix or '(none)'} is not configured media"
+                            role = "IGNORED" if reason.startswith("IGNORED_") else "PRIMARY_MEDIA" if primary else "SIDECAR" if sidecar else "UNSUPPORTED"
                             result.files.append(MediaFile(path, relative, st.st_size, st.st_mtime_ns, identity(st),
-                                                          recognized, recognized and not reason, reason, detail, st.st_ctime_ns))
+                                                          recognized, primary and not reason, reason, detail, st.st_ctime_ns, role))
                         else:
                             result.skipped.append({"path": relative, "reason": "NOT_REGULAR_FILE"})
                     except OSError as exc:
@@ -61,4 +68,21 @@ class SourceScanner:
             except OSError as exc:
                 result.gaps.append({"path": directory.relative_to(root).as_posix(), "reason": str(exc)})
         result.files.sort(key=lambda f: (f.relative_path.casefold(), f.relative_path))
+        primaries = {}
+        for media in result.files:
+            if media.media_role == "PRIMARY_MEDIA" and media.eligible:
+                key = (media.path.parent, media.path.stem.casefold())
+                primaries.setdefault(key, []).append(media)
+        associated = []
+        for media in result.files:
+            if media.media_role != "SIDECAR" or media.reason:
+                associated.append(media)
+                continue
+            candidates = primaries.get((media.path.parent, media.path.stem.casefold()), [])
+            if len(candidates) == 1:
+                associated.append(replace(media, eligible=True, associated_primary=candidates[0].relative_path))
+            else:
+                detail = "no same-directory primary media has this stem" if not candidates else "multiple same-directory primary media share this stem"
+                associated.append(replace(media, reason="UNASSOCIATED_SIDECAR", detail=detail))
+        result.files = associated
         return result

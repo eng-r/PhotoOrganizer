@@ -21,7 +21,7 @@ Each invocation after validation needs an empty destination. Preview output is n
 | `reports/not_archived.csv` | One row for each original file not confirmed as archived; reason and destination presence. |
 | `reports/ignored_files.csv` | Explicit exclusions and unsupported extensions. |
 | `reports/errors.csv` | File-level and fatal errors. |
-| `reports/plan.csv` | Source-to-target mapping, classification, size, event; available after planning. |
+| `reports/plan.csv` | Source-to-target mapping, daily count/classification, media role, storage leaf, sidecar association and size; available after planning. |
 | `_AuditTrail/manifest.jsonl` | One planning record per eligible file with raw/rejected timestamp candidates. |
 | `_AuditTrail/timestamp_audit.csv` | Human-readable date provenance and assignments. |
 | `_AuditTrail/copy_verification.csv` | Sizes, SHA-256, attempts, and final per-file verification results. |
@@ -37,12 +37,15 @@ CSV cells beginning with spreadsheet formula characters receive a leading apostr
 
 The chapter is based on the entire ordinary-file inventory, including ignored directories and unsupported extensions. Every row includes source-relative path, intended destination when known, disposition, presence, reason, stage, and attempts.
 
-- **EXCLUDED:** intentionally ignored or unsupported; not an eligible-media reconciliation failure.
+- **UNSUPPORTED / IGNORED:** intentionally not archived; not a primary-media reconciliation failure.
+- **UNASSOCIATED_SIDECAR:** no unique same-directory/same-stem primary was available, so the organizer did not guess.
 - **FAILED:** a copy/read/hash/publication operation or planned collision failed.
 - **NOT_ATTEMPTED:** preflight failure, interruption, stopped scheduling, or preview-only analysis.
 - **UNCONFIRMED:** publication was reported but recount was incomplete, the source changed, or the expected destination is missing/mismatched.
 
 A presence value of `PRESENT_UNVERIFIED` means a destination file exists but is not accepted as a confirmed result. `NOT_CHECKED` means the scan did not establish presence. Successfully copied `_UNKNOWN_DATE` files are archived and are absent from this list. Metadata errors alone do not put a verified copy in this list, though they still make the overall run fail.
+
+The HTML report's Daily grouping summary lists every resolved date, primary-media count, associated-sidecar count, classification, and destination. Summary JSON reports primary-media and sidecar reconciliation separately; both must pass for an overall successful run.
 
 Unreadable subtrees and skipped reparse points are reported as coverage gaps/skipped entries, not invented per-file rows. New files found at recount are separately identified as `SOURCE_ADDED_AFTER_PLANNING`.
 
