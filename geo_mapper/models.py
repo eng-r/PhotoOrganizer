@@ -2,6 +2,22 @@ from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
+from enum import Enum
+
+
+class TargetScope(str, Enum):
+    MONTH = "month"
+    YEAR = "year"
+    ARCHIVE = "archive"
+
+
+@dataclass(frozen=True)
+class ResolvedTarget:
+    path: Path
+    scope: TargetScope
+    year: int | None = None
+    month: int | None = None
+    month_folder_context: str | None = None
 
 
 @dataclass(frozen=True)

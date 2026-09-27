@@ -1,18 +1,14 @@
 import argparse
 import logging
-import os
 import sys
 from pathlib import Path
 
-from .cache import EnrichmentCache
-from .discovery import DiscoveryError, discover_media, resolve_scope
+from .config import MONTH_NAMES
+from .discovery import DiscoveryError, discover_media, discover_target, resolve_target
 from .exiftool_adapter import ExifToolAdapter, ExifToolError
-from .geocoding import GeoNamesGeocoder
-from .html_renderer import render_month, render_year
 from .logging_utils import configure_logging
-from .map_model import build_month_model, build_year_model, enrich_clusters, write_model
-from .models import MapperWarning
-from .reporting import month_report, year_report
+from .models import TargetScope
+from .orchestrator import process_target
 
 
 LOGGER = logging.getLogger(__name__)
@@ -20,7 +16,8 @@ LOGGER = logging.getLogger(__name__)
 
 def parser():
     result = argparse.ArgumentParser(description="Generate read-only monthly and annual maps from an organized photo archive.")
-    result.add_argument("target_path", type=Path)
+    result.add_argument("target_path", nargs="?", type=Path, default=Path.cwd())
+    result.add_argument("--scope", choices=[scope.value for scope in TargetScope], help="Validate an explicit target scope.")
     result.add_argument("--rebuild", action="store_true", help="Regenerate outputs (the default; retained for explicit scripts).")
     result.add_argument("--offline", action="store_true", help="Prohibit network enrichment while still using cached place names.")
     result.add_argument("--no-geocode", action="store_true", help="Disable live reverse geocoding.")
@@ -30,63 +27,56 @@ def parser():
     return result
 
 
-def _write_html(path, content):
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(content, encoding="utf-8")
-    temporary.replace(path)
+def _startup_report(resolved, years):
+    print("Geo Mapper")
+    print(f"Target: {resolved.path}")
+    print(f"Detected scope: {resolved.scope.value.upper()}")
+    if resolved.scope == TargetScope.MONTH:
+        print(f"Year: {resolved.year}")
+        print(f"Month: {MONTH_NAMES[resolved.month]}")
+        if resolved.month_folder_context:
+            print(f"Context: {resolved.month_folder_context}")
+    elif resolved.scope == TargetScope.YEAR:
+        print(f"Year: {resolved.year}")
+        print(f"Months discovered: {len(years[resolved.year])}")
+    else:
+        print("Years discovered: " + ", ".join(str(year) for year in sorted(years)))
+        print(f"Months discovered: {sum(len(months) for months in years.values())}")
 
 
 def run(args, adapter=None):
     configure_logging(args.verbose)
-    scope, years = resolve_scope(args.target_path)
-    LOGGER.debug("Resolved %s target with years: %s", scope, sorted(years))
+    resolved = resolve_target(args.target_path, args.scope)
+    years = discover_target(resolved)
+    LOGGER.debug("Resolved %s target with years: %s", resolved.scope.value, sorted(years))
+    _startup_report(resolved, years)
     discovered = sum(len(months) for months in years.values())
     if args.dry_run:
         for year, months in years.items():
             for month in months:
                 print(f"Would process {month.path} ({len(discover_media(month))} media files)")
-            if scope != "month":
-                print(f"Would generate {args.target_path if scope == 'year' else args.target_path / str(year)}/travel_map_{year}.html")
+            if resolved.scope != TargetScope.MONTH and months:
+                year_path = resolved.path if resolved.scope == TargetScope.YEAR else resolved.path / str(year)
+                print(f"Would generate {year_path / f'travel_map_{year}.html'}")
         print(f"Dry run complete: {discovered} month(s); no files written; no network calls made.")
         return 0
     adapter = adapter or ExifToolAdapter()
     adapter.check()
-    username = os.environ.get("GEO_MAPPER_GEONAMES_USERNAME")
-    geocoder = None if args.offline or args.no_geocode or not username else GeoNamesGeocoder(username)
-    processed, no_gps, warning_count = 0, 0, 0
-    for year, months in years.items():
-        models = []
-        for month in months:
-            files = discover_media(month)
-            raw = adapter.extract(files)
-            model = build_month_model(month, files, raw)
-            cache = EnrichmentCache(month.path / ".geo_mapper/cache.json").load()
-            model = enrich_clusters(model, cache, geocoder)
-            model.warnings.extend(MapperWarning("CACHE", warning, ".geo_mapper/cache.json") for warning in cache.warnings)
-            for warning in model.warnings:
-                LOGGER.debug("%s %s: %s", warning.category, warning.path, warning.message)
-            write_model(month.path / ".geo_mapper/geo_data.json", model)
-            cache.save()
-            output = month.path / args.output_name
-            _write_html(output, render_month(model))
-            month_report(model, output)
-            models.append(model)
-            processed += 1
-            no_gps += not model.geo_events
-            warning_count += len(model.warnings)
-        if scope != "month" and models:
-            year_path = args.target_path if scope == "year" else args.target_path / str(year)
-            year_model = build_year_model(year_path, models, args.output_name)
-            write_model(year_path / ".geo_mapper/year_data.json", year_model)
-            output = year_path / f"travel_map_{year}.html"
-            _write_html(output, render_year(year_model))
-            year_report(year_model, output)
-    print("Geo Mapper complete")
-    print(f"  months discovered: {discovered}")
-    print(f"  months processed:  {processed}")
-    print(f"  months with no GPS:{no_gps:3d}")
-    print(f"  warnings:          {warning_count:3d}")
-    return 0
+    result = process_target(resolved, years, args, adapter, LOGGER)
+    print("Geo Mapper complete\n")
+    print(f"  years discovered:      {result.years_discovered}")
+    print(f"  years processed:       {result.years_processed}")
+    print(f"  months discovered:     {result.months_discovered}")
+    print(f"  months succeeded:      {result.months_succeeded}")
+    print(f"  months failed:         {result.months_failed}")
+    print(f"  monthly maps created:  {result.monthly_maps_created}")
+    print(f"  annual maps created:   {result.annual_maps_created}")
+    print(f"  annual maps skipped:   {result.annual_maps_skipped}")
+    print(f"  warnings:              {result.warnings}")
+    print(f"  errors:                {len(result.errors)}")
+    for reason in result.skipped_annual:
+        print(f"  skipped: {reason}")
+    return result.exit_code
 
 
 def main(argv=None):

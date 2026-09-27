@@ -10,7 +10,7 @@ requires-python = ">=3.12"
 dependencies = []
 
 [project.optional-dependencies]
-test = ["pytest>=8"]
+test = ["pytest>=8.3,<10", "Pillow>=10,<13"]
 
 [project.scripts]
 photo-organizer = "photo_archive_organizer.cli:main"

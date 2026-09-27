@@ -8,16 +8,17 @@ from pathlib import Path
 import pytest
 
 from geo_mapper.cache import EnrichmentCache
-from geo_mapper.cli import run
+from geo_mapper.cli import parser, run
 from geo_mapper.clustering import cluster_events, haversine_km
-from geo_mapper.discovery import DiscoveryError, discover_media, parse_month_folder, resolve_scope
+from geo_mapper.discovery import (DiscoveryError, discover_media, discover_target, parse_month_folder,
+                                  resolve_scope, resolve_target)
 from geo_mapper.exiftool_adapter import ExifToolAdapter, ExifToolError
 from geo_mapper.geocoding import PlaceInfo
 from geo_mapper.html_renderer import render_month, render_year
 from geo_mapper.map_model import build_month_model, build_year_model, enrich_clusters, write_model
 from geo_mapper.media_identity import MediaIdentityResolver
 from geo_mapper.metadata import normalize_metadata, validate_gps
-from geo_mapper.models import GeoPhotoEvent, MonthFolder
+from geo_mapper.models import GeoPhotoEvent, MonthFolder, TargetScope
 from geo_mapper.notes import read_notes, render_safe_markdown
 from geo_mapper.sequence import build_day_groups
 
@@ -65,10 +66,10 @@ def test_scope_and_sparse_only_discovery(tmp_path):
     media(m.path / "_sparse/A.XMP")
     (tmp_path / "2026/unrelated").mkdir()
     scope, years = resolve_scope(tmp_path)
-    assert scope == "archive" and [x.month for x in years[2026]] == [3]
+    assert scope == TargetScope.ARCHIVE and [x.month for x in years[2026]] == [3]
     assert [p.name for p in discover_media(m)] == ["A.JPG"]
-    assert resolve_scope(m.path)[0] == "month"
-    assert resolve_scope(m.path.parent)[0] == "year"
+    assert resolve_scope(m.path)[0] == TargetScope.MONTH
+    assert resolve_scope(m.path.parent)[0] == TargetScope.YEAR
 
 
 def test_empty_month_omitted(tmp_path):
@@ -243,7 +244,7 @@ class FakeAdapter:
 
 
 def args(path, **values):
-    defaults = dict(target_path=path, rebuild=False, offline=True, no_geocode=False, verbose=False,
+    defaults = dict(target_path=path, scope=None, rebuild=False, offline=True, no_geocode=False, verbose=False,
                     dry_run=False, output_name="travel_map.html")
     defaults.update(values)
     return Namespace(**defaults)
@@ -281,6 +282,94 @@ def test_dry_run_writes_nothing_and_skips_adapter(tmp_path):
     adapter = FakeAdapter({})
     assert run(args(m.path, dry_run=True), adapter) == 0
     assert not adapter.checked and not (m.path / "travel_map.html").exists() and not (m.path / ".geo_mapper").exists()
+
+
+def test_explicit_scope_validates_instead_of_forcing(tmp_path):
+    m = month(tmp_path)
+    assert resolve_target(m.path, "month").scope == TargetScope.MONTH
+    assert resolve_target(m.path.parent, "year").scope == TargetScope.YEAR
+    assert resolve_target(tmp_path, "archive").scope == TargetScope.ARCHIVE
+    with pytest.raises(DiscoveryError, match="does not satisfy MONTH"):
+        resolve_target(m.path.parent, "month")
+
+
+def test_noncanonical_year_and_ambiguous_target_rejected(tmp_path):
+    bad = tmp_path / "2025_backup"
+    bad.mkdir()
+    with pytest.raises(DiscoveryError, match="Unable to determine"):
+        resolve_target(bad)
+    vacation = tmp_path / "Vacation"
+    vacation.mkdir()
+    (vacation / "nested/2026").mkdir(parents=True)
+    with pytest.raises(DiscoveryError, match="Unable to determine"):
+        resolve_target(vacation)
+
+
+def test_archive_years_and_months_sort_numerically(tmp_path):
+    for year, month_name in [(2026, "12-Dec"), (2024, "10-Oct"), (2025, "03-Mar.Z")]:
+        media(tmp_path / str(year) / month_name / "_sparse/a.jpg")
+    resolved = resolve_target(tmp_path)
+    years = discover_target(resolved)
+    assert list(years) == [2024, 2025, 2026]
+    assert [m.month for m in years[2025]] == [3]
+
+
+def test_generated_artifacts_never_become_media(tmp_path):
+    m = month(tmp_path)
+    media(m.path / "_sparse/photo.jpg")
+    media(m.path / ".geo_mapper/thumbnails/generated.jpg")
+    (m.path / "travel_map.html").write_text("generated")
+    (m.path / "travel_map_2026.html").write_text("generated")
+    (m.path / "map_notes.md").write_text("notes")
+    (m.path / ".geo_mapper/cache.json").write_text("{}")
+    assert [p.name for p in discover_media(m)] == ["photo.jpg"]
+
+
+def test_no_argument_parser_uses_current_directory(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    parsed = parser().parse_args([])
+    assert parsed.target_path == tmp_path
+
+
+def test_fatal_month_preserves_annual_and_continues_years(tmp_path):
+    jan_2025 = tmp_path / "2025/01-Jan"
+    feb_2025 = tmp_path / "2025/02-Feb"
+    jan_2026 = tmp_path / "2026/01-Jan"
+    media(jan_2025 / "Day01/fail.jpg")
+    media(feb_2025 / "Day01/good.jpg")
+    media(jan_2026 / "Day01/later.jpg")
+    annual_2025 = tmp_path / "2025/travel_map_2025.html"
+    annual_2025.write_text("known-good-annual")
+    class FailingMonthAdapter(FakeAdapter):
+        def extract(self, paths):
+            if any("01-Jan" in path.parts and "2025" in path.parts for path in paths):
+                raise RuntimeError("injected fatal month failure")
+            return super().extract(paths)
+    assert run(args(tmp_path), FailingMonthAdapter({})) == 1
+    assert annual_2025.read_text() == "known-good-annual"
+    assert (feb_2025 / "travel_map.html").is_file()
+    assert (tmp_path / "2026/travel_map_2026.html").is_file()
+    assert not (tmp_path / "Life_Map.html").exists()
+
+
+def test_direct_year_and_archive_year_data_are_equivalent(tmp_path):
+    m = month(tmp_path, "03-Mar")
+    media(m.path / "Day04/a.jpg")
+    adapter = FakeAdapter({})
+    assert run(args(tmp_path / "2026"), adapter) == 0
+    direct = (tmp_path / "2026/.geo_mapper/year_data.json").read_text()
+    assert run(args(tmp_path), FakeAdapter({})) == 0
+    assert (tmp_path / "2026/.geo_mapper/year_data.json").read_text() == direct
+
+
+def test_demo_batch_files_cover_scopes_and_current_directory():
+    root = Path(__file__).parents[1]
+    assert '"%CD%"' in (root / "geo_mapper.bat").read_text()
+    assert "--scope archive" in (root / "demo_archive.bat").read_text()
+    assert "--scope year" in (root / "demo_year.bat").read_text()
+    assert "--scope month" in (root / "demo_month.bat").read_text()
+    dry = (root / "demo_offline_dry_run.bat").read_text()
+    assert "--offline --dry-run" in dry and "TARGET=%CD%" in dry
 
 
 def test_exiftool_adapter_batches_with_argument_file(tmp_path, monkeypatch):

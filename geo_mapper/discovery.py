@@ -2,11 +2,24 @@ import re
 from pathlib import Path
 
 from .config import MEDIA_EXTENSIONS, MONTH_ABBR
-from .models import MonthFolder
+from .models import MonthFolder, ResolvedTarget, TargetScope
 
 
 class DiscoveryError(ValueError):
     pass
+
+
+MIN_YEAR = 1800
+MAX_YEAR = 9999
+
+
+def parse_year_folder(path: Path) -> int:
+    if not re.fullmatch(r"\d{4}", path.name):
+        raise DiscoveryError(f"not a canonical year folder: {path.name}")
+    year = int(path.name)
+    if not MIN_YEAR <= year <= MAX_YEAR:
+        raise DiscoveryError(f"year folder is outside the supported range {MIN_YEAR}..{MAX_YEAR}: {path.name}")
+    return year
 
 
 def parse_month_folder(path: Path, year: int | None = None) -> MonthFolder:
@@ -43,9 +56,7 @@ def discover_media(month: MonthFolder) -> list[Path]:
 
 
 def _months_in_year(path: Path) -> list[MonthFolder]:
-    if not re.fullmatch(r"\d{4}", path.name):
-        raise DiscoveryError(f"year folder must be four digits: {path}")
-    year = int(path.name)
+    year = parse_year_folder(path)
     months = []
     for child in sorted((p for p in path.iterdir() if p.is_dir()), key=lambda p: p.name.casefold()):
         try:
@@ -59,25 +70,60 @@ def _months_in_year(path: Path) -> list[MonthFolder]:
     return sorted(months, key=lambda m: m.month)
 
 
-def resolve_scope(target: Path):
+def discover_months(year_path: Path):
+    return _months_in_year(year_path)
+
+
+def discover_years(archive_path: Path):
+    years = []
+    for child in archive_path.iterdir():
+        if not child.is_dir():
+            continue
+        try:
+            year = parse_year_folder(child)
+        except DiscoveryError:
+            continue
+        years.append((year, child))
+    return sorted(years, key=lambda item: item[0])
+
+
+def resolve_target(target: Path, explicit_scope: TargetScope | str | None = None) -> ResolvedTarget:
     target = target.resolve()
     if not target.is_dir():
         raise DiscoveryError(f"target does not exist or is not a directory: {target}")
+    detected = None
     try:
         month = parse_month_folder(target)
-        if not re.fullmatch(r"\d{4}", target.parent.name):
-            raise DiscoveryError(f"month parent must be a four-digit year: {target.parent}")
-        return "month", {month.year: [month]}
+        year = parse_year_folder(target.parent)
+        detected = ResolvedTarget(target, TargetScope.MONTH, year, month.month, month.context)
     except (DiscoveryError, ValueError):
         pass
-    if re.fullmatch(r"\d{4}", target.name):
-        return "year", {int(target.name): _months_in_year(target)}
-    years = {}
-    for child in sorted((p for p in target.iterdir() if p.is_dir()), key=lambda p: p.name):
-        if re.fullmatch(r"\d{4}", child.name):
-            months = _months_in_year(child)
-            if months:
-                years[int(child.name)] = months
-    if not years:
-        raise DiscoveryError(f"no processable year/month hierarchy found under {target}")
-    return "archive", years
+    if detected is None:
+        try:
+            year = parse_year_folder(target)
+            detected = ResolvedTarget(target, TargetScope.YEAR, year)
+        except DiscoveryError:
+            pass
+    if detected is None and discover_years(target):
+        detected = ResolvedTarget(target, TargetScope.ARCHIVE)
+    if detected is None:
+        raise DiscoveryError("Unable to determine Geo Mapper target scope. Expected MONTH NN-Mmm[optional suffix], YEAR YYYY, or ARCHIVE with immediate YYYY child folders.")
+    if explicit_scope is not None:
+        expected = TargetScope(explicit_scope)
+        if detected.scope != expected:
+            raise DiscoveryError(f"Target does not satisfy {expected.value.upper()} scope rules; detected {detected.scope.value.upper()} instead.")
+    return detected
+
+
+def discover_target(resolved: ResolvedTarget):
+    if resolved.scope == TargetScope.MONTH:
+        return {resolved.year: [parse_month_folder(resolved.path, resolved.year)]}
+    if resolved.scope == TargetScope.YEAR:
+        return {resolved.year: discover_months(resolved.path)}
+    return {year: discover_months(path) for year, path in discover_years(resolved.path)}
+
+
+def resolve_scope(target: Path):
+    """Compatibility wrapper returning the typed scope and discovered months."""
+    resolved = resolve_target(target)
+    return resolved.scope, discover_target(resolved)
