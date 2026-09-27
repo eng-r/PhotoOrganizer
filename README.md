@@ -46,6 +46,14 @@ After installing Python 3.12+ and ExifTool:
 
 The BAT performs the complete safe workflow: validate, inventory, analyze metadata, plan, check collisions and free space, copy, verify, reconcile, and report. The source is read-only and the destination must be empty.
 
+## Configuration notes
+
+`timestamp.future_tolerance_days` rejects suspicious capture dates that are too far after the run clock. The default `2` accepts small camera, phone, metadata, or timezone mistakes while rejecting obvious future dates such as `2099-01-01`. When a candidate timestamp is beyond this tolerance, the organizer tries the next configured timestamp source; if none is usable, the file is archived under `_UNKNOWN_DATE/`.
+
+`copy.copy_workers` controls how many files may be copied and verified at the same time. The default `2` keeps the process moving without making slower disks or USB drives fight too much for bandwidth. Raising it can help on fast SSDs; lowering it can make runs gentler on removable drives.
+
+`copy.free_space_margin_percent` adds extra required free space above the planned archive size before copying starts. The default `10` means the destination needs the planned bytes plus a 10 percent safety margin, with additional allowance for temporary partial files created by concurrent copy workers.
+
 ## Output
 
 ```text

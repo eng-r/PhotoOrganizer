@@ -8,4 +8,6 @@ dist/
 .coverage
 plan/
 _refs/
-config.json
+config-actual.json
+start_actual.bat
+
