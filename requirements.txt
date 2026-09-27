@@ -1,0 +1,3 @@
+# Application runtime: Python 3.12+ standard library only.
+# ExifTool is a separate executable; pip does not install it.
+# Install test dependencies with: python -m pip install -r requirements-dev.txt

@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "photo-archive-organizer"
+version = "1.0.0"
+description = "Read-only source analysis and verified chronological media archiving"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.scripts]
+photo-organizer = "photo_archive_organizer.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["photo_archive_organizer*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["exiftool: integration tests requiring a real ExifTool installation"]

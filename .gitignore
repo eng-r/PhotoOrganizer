@@ -1,0 +1,11 @@
+__pycache__/
+.pytest_cache/
+*.egg-info/
+.venv/
+.tools/
+build/
+dist/
+.coverage
+plan/
+_refs/
+config.json
