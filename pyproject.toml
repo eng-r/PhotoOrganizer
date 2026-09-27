@@ -14,10 +14,11 @@ test = ["pytest>=8"]
 
 [project.scripts]
 photo-organizer = "photo_archive_organizer.cli:main"
+geo-mapper = "geo_mapper.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["photo_archive_organizer*"]
+include = ["photo_archive_organizer*", "geo_mapper*"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "geo_mapper/tests"]
 markers = ["exiftool: integration tests requiring a real ExifTool installation"]

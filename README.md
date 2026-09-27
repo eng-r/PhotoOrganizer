@@ -4,6 +4,8 @@ A local Python CLI that analyzes one source collection and copies media into a n
 
 For normal use there are only two files to care about: [config.json](config.json), which contains every user-adjustable setting, and [start.bat](start.bat). See the [quick start](docs/QUICK_START.md). Installation and deeper details remain in the `docs` folder.
 
+The repository also includes an independent, optional [Geo Mapper](geo_mapper/README.md). It reads an already organized archive and creates monthly and annual GPS memory maps without changing media or participating in organization.
+
 ## What it does
 
 - Recursively inventories ordinary files, including excluded files, so omissions can be explained.

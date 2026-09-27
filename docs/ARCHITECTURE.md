@@ -70,3 +70,7 @@ Reconciliation can PASS while the overall run fails because metadata extraction 
 - Source stability uses identity/size/mtime; deliberate same-size changes with restored timestamps are outside that inventory check. Copied bytes are still SHA-256 verified. Final reconciliation does not rehash all source media a second time.
 - Memory grows with the inventory and metadata/audit records, not with video file size. Content streaming uses 1 MiB buffers per copy/hash operation.
 - Timestamp selection cannot prove a camera clock was correct. Unknown offsets remain unknown, and supplied metadata may represent digitization rather than original historical capture.
+
+## Geo Mapper Add-On
+
+`geo_mapper/` is a separate read-only post-processing package. It discovers the organizer's fixed year/month hierarchy, extracts GPS metadata through its own batched ExifTool boundary, collapses JPG/RAW companions into logical photo events, and generates disposable monthly and annual HTML/JSON artifacts. It never participates in organizer discovery, grouping, planning, copying, or reconciliation. Human folder context and `map_notes.md` remain explicitly separate from EXIF/geocoder-derived geography.
