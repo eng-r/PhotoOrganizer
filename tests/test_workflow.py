@@ -87,6 +87,20 @@ def test_generic_filenames(roots, make_config, with_dates):
         assert (dest / "2018/07-Jul/_sparse/IMG_20180729_093414.jpg").exists()
 
 
+def test_m2ts_h264_timestamp_populates_dated_folder_without_source_changes(roots, make_config):
+    source, dest = roots
+    name = "f24125440_pid_0.m2ts"
+    create_files(source, [name])
+    before = snapshot(source)
+    provider = FakeProvider({name: {"H264:DateTimeOriginal": "2017:05:31 18:07:34-05:00 DST"}})
+    app = ArchiveOrganizer(make_config(day_grouping={"threshold": 1}), provider, NOW)
+
+    assert app.execute("run") == 0
+    assert (dest / "2017/05-May/Day31" / name).is_file()
+    assert app.state.timestamps[name].source_field == "H264:DateTimeOriginal"
+    assert snapshot(source) == before
+
+
 def test_flist2_regression(roots, make_config):
     source, dest = roots
     listed = Path(__file__).parents[1] / "_refs/flist2.txt"

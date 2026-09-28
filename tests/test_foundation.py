@@ -31,6 +31,7 @@ def test_priority_authoritative(make_config):
     assert cfg.section("timestamp")["priority"] == []
     assert "FilesystemMTime" not in make_config().section("timestamp")["priority"]
     assert ".bmp" in cfg.section("media")["include_extensions"]
+    assert ".m2ts" in cfg.section("media")["include_extensions"]
 
 
 def test_duplicate_json_and_relative_paths(tmp_path):

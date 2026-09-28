@@ -6,7 +6,7 @@ For normal use, edit only `source_root` and `destination_root` in the root `conf
 
 | Section / field | Default / meaning |
 | --- | --- |
-| `media.include_extensions` | JPEG, HEIC, PNG, TIFF, BMP, CR2, CR3, ARW, DNG, MP4, MOV, M4V; include a leading dot. Case-insensitive. Add other camera/media extensions explicitly. |
+| `media.include_extensions` | JPEG, HEIC, PNG, TIFF, BMP, CR2, CR3, ARW, DNG, MP4, MOV, M4V, M2TS; include a leading dot. Case-insensitive. Add other camera/media extensions explicitly. |
 | `media.ignore_name_patterns` | `.trashed.*`, `.trashed-*`, `Thumbs.db`, `.DS_Store`. Case-insensitive basename globs. |
 | `media.ignore_directory_patterns` | `@eaDir`, `.Trash-*`. Descendants are still inventoried but never metadata-analyzed, dated, planned, or copied. |
 | `timestamp.priority` | `DateTimeOriginal`, `XMPDateCreated`, `CreateDate`, `VideoCreationDate`, `FilenameDate`. First usable configured category wins. |

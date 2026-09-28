@@ -13,6 +13,7 @@ TAG_MAP = {
     "VideoCreationDate": ["Keys:CreationDate", "UserData:DateTimeOriginal", "QuickTime:CreateDate",
                           "Track1:MediaCreateDate", "Track1:TrackCreateDate", "Track2:MediaCreateDate"],
 }
+M2TS_DATE_TIME_ORIGINAL_TAG = "H264:DateTimeOriginal"
 
 
 def filename_date(name):
@@ -53,11 +54,17 @@ class TimestampResolver:
         for category in self.config["priority"]:
             if category in TAG_MAP:
                 mapped_tags = list(TAG_MAP[category])
+                is_m2ts_original = category == "DateTimeOriginal" and media.path.suffix.casefold() == ".m2ts"
+                if is_m2ts_original:
+                    mapped_tags.append(M2TS_DATE_TIME_ORIGINAL_TAG)
                 if category == "VideoCreationDate":
                     mapped_tags += sorted(k for k in tags if re.fullmatch(r"Track[0-9]+:(?:MediaCreateDate|TrackCreateDate)", k) and k not in mapped_tags)
                 for tag in mapped_tags:
                     if tag in tags:
                         raw = tags[tag]
+                        if is_m2ts_original and tag == M2TS_DATE_TIME_ORIGINAL_TAG:
+                            # Sony AVCHD metadata may append " DST" after an explicit UTC offset.
+                            raw = str(raw).removesuffix(" DST")
                         # Pair EXIF offset/subsecond only with the matching timestamp field.
                         suffix = "Original" if category == "DateTimeOriginal" else "Digitized"
                         if tag.startswith(("ExifIFD:", "EXIF:", "IFD0:")):

@@ -52,6 +52,23 @@ def test_metadata_priority_and_provenance(roots, make_config):
     assert fallback.category == "FilenameDate" and fallback.rejected_candidates
 
 
+def test_h264_date_time_original_is_m2ts_only(roots, make_config):
+    source, _ = roots
+    create_files(source, ["clip.m2ts", "clip.mp4"])
+    media = {item.path.suffix: item for item in SourceScanner(make_config().section("media")).scan(source).eligible}
+    resolver = TimestampResolver(make_config().section("timestamp"), NOW)
+    metadata = MediaMetadata({"H264:DateTimeOriginal": "2017:05:31 18:07:34-05:00 DST"})
+
+    m2ts = resolver.resolve(media[".m2ts"], metadata)
+    assert m2ts.value.isoformat() == "2017-05-31T18:07:34-05:00"
+    assert m2ts.category == "DateTimeOriginal"
+    assert m2ts.source_field == "H264:DateTimeOriginal"
+    assert m2ts.raw_candidates[0]["raw"].endswith(" DST")
+    assert m2ts.raw_candidates[0]["interpreted_raw"].endswith("-05:00")
+
+    assert resolver.resolve(media[".mp4"], metadata).value is None
+
+
 def test_unknown_and_opt_in_mtime(roots, make_config):
     source, _ = roots
     create_files(source, ["007.JPG"])

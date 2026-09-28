@@ -12,7 +12,7 @@ class ConfigError(ValueError):
 DEFAULTS = {
     "media": {
         "include_extensions": [".jpg", ".jpeg", ".heic", ".png", ".tif", ".tiff", ".bmp",
-                               ".cr2", ".cr3", ".arw", ".dng", ".mp4", ".mov", ".m4v"],
+                               ".cr2", ".cr3", ".arw", ".dng", ".mp4", ".mov", ".m4v", ".m2ts"],
         "ignore_name_patterns": [".trashed.*", ".trashed-*", "Thumbs.db", ".DS_Store"],
         "ignore_directory_patterns": ["@eaDir", ".Trash-*"],
     },
